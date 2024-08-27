@@ -1,0 +1,5 @@
+git init --bare -b=main
+git symbolic-ref HEAD refs/heads/main
+git rev-list --count HEAD
+git log --oneline --decorate
+git log --format="%h - %ad : %s" --date=short

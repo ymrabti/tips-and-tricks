@@ -2,7 +2,7 @@
 import os
 import shutil
 
-PROJECTS_DIRECTORY = "C:/Users/youmt/Coding"
+PROJECTS_DIRECTORY = "C:/Users/youmt/Programminng"
 
 def remove_node_modules(directory):
     """shcdg"""
