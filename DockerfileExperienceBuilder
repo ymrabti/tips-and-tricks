@@ -1,7 +1,9 @@
 FROM node:18-alpine
+
 # cd /home/devuser/ArcGISExperienceBuilder
-# docker build -t debian/arcgis/experiencebuilder .
-# docker run -p 9417:9417 debian/arcgis/experiencebuilder
+# docker build -t ubuntu/webservice .
+# docker run --rm -p 6834:6834 ubuntu/webservice
+
 WORKDIR /
 
 COPY . /
