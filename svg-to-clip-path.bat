@@ -1,0 +1,1 @@
+svg-to-flutter convert input.svg -o my-output.dart
