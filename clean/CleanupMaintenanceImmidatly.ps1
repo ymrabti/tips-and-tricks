@@ -1,0 +1,1 @@
+powershell.exe -ExecutionPolicy Bypass -File "C:\Users\youmt\Programminng\tips-and-tricks\clean\CleanupMaintenance.ps1"
