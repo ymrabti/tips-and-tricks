@@ -1,7 +1,7 @@
 # docker compose -f "compose\docker-compose-mssql.yml" up -d --build
 
 
-
+name: CSA-Docker
 services:
   sqlserver:
     image: mcr.microsoft.com/mssql/server:2019-latest
