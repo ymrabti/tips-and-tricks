@@ -1,16 +1,16 @@
 # docker compose -f "compose\docker-compose-mssql.yml" up -d --build
 
 
-name: CSA-Docker
+name: stagiares_sqlserver
 services:
   sqlserver:
     image: mcr.microsoft.com/mssql/server:2019-latest
-    container_name: sqlserver
+    container_name: stagiares_sqlserver
     ports:
-      - "1433:1433"
+      - "8793:1433"
     environment:
       ACCEPT_EULA: Y
-      SA_PASSWORD: YourStrong@Passw0rd
+      SA_PASSWORD: sa_pass2025.11
       MSSQL_PID: Express
     volumes:
       - sql_data:/var/opt/mssql

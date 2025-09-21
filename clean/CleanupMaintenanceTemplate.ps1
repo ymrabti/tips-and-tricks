@@ -1,10 +1,8 @@
+# TaskScheduler: Windows Cleanup Task
+# powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Users\youmt\Programminng\tips-and-tricks\clean\CleanupMaintenance.ps1"
 # --- Config ---
-$logPath = "C:\Scripts\CleanupLog.txt"
+$logEntries = @()   # in-memory log
 
-# Ensure the folder exists
-if (!(Test-Path -Path (Split-Path $logPath))) {
-    New-Item -Path (Split-Path $logPath) -ItemType Directory -Force | Out-Null
-}
 $smtpServer = "smtp.mail.me.com"
 $smtpPort = 587
 $smtpUser = ""
@@ -19,7 +17,7 @@ function Log {
     $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
     $entry = "$timestamp - $message"
     Write-Output $entry
-    Add-Content -Path $logPath -Value $entry
+    $global:logEntries += $entry
 }
 
 try {
@@ -32,9 +30,16 @@ try {
 
     # Empty Recycle Bin
     Log "Emptying Recycle Bin..."
-    $shell = New-Object -ComObject Shell.Application
-    $recycleBin = $shell.NameSpace(0xA)
-    $recycleBin.Items() | ForEach-Object { $recycleBin.InvokeVerb("delete") }
+    # $shell = New-Object -ComObject Shell.Application
+    # $recycleBin = $shell.NameSpace(0xA)
+    # $recycleBin.Items() | ForEach-Object { $recycleBin.InvokeVerb("delete") }
+    try {
+        Clear-RecycleBin -Force -ErrorAction Stop
+        Log "Recycle Bin emptied successfully."
+    }
+    catch {
+        Log "Failed to empty Recycle Bin: $_"
+    }
 
     # Disk Cleanup for system files
     Log "Running Disk Cleanup for system files..."
@@ -58,7 +63,7 @@ try {
 
     # Send email notification with log
     Log "Sending email notification..."
-    $body = Get-Content -Path $logPath | Out-String
+    $body = $logEntries -join "`r`n"
     $message = New-Object System.Net.Mail.MailMessage $emailFrom, $emailTo, $emailSubject, $body
     $smtp = New-Object System.Net.Mail.SmtpClient $smtpServer, $smtpPort
     $smtp.EnableSsl = $true
