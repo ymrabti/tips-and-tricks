@@ -1,4 +1,4 @@
-# docker compose -f "compose\docker-compose-mssql.yml" up -d --build
+# docker compose -f "compose/docker-compose-mssql.yml" up -d --build
 
 
 name: stagiares_sqlserver
