@@ -7,6 +7,7 @@ docker --context remote-msi-cloudflared ps
 
 docker context use remote-msi-cloudflared
 
+ssh-keygen -f "/root/.ssh/known_hosts" -R "192.168.1.77"
 docker context create remote-msi-windows --docker "host=ssh://root@192.168.1.77"
 docker --context remote-msi-windows ps
 
