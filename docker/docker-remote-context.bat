@@ -1,7 +1,7 @@
 docker context use default
 docker context rm remote-msi-cloudflared
 
-docker context create remote-msi-cloudflared --docker "host=http://docker2.youmti.net"
+docker context create remote-msi-cloudflared --docker "host=http://docker.youmti.net"
 docker --context remote-msi-cloudflared ps
 
 
