@@ -12,4 +12,5 @@ docker context create remote-msi-windows --docker "host=ssh://root@192.168.1.77"
 docker --context remote-msi-windows ps
 
 ssh-keygen -f "/root/.ssh/known_hosts" -R "192.168.1.77"
-ssh root:MSI_ROOT_2025@192.168.1.77
+ssh-keygen -f "%USERPROFILE%\.ssh\known_hosts" -R "192.168.1.77"
+ssh root@192.168.1.77
