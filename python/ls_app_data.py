@@ -1,6 +1,10 @@
 import os
 from pathlib import Path
 
+THRESHOLD_MB = 50
+THRESHOLD_BYTES = THRESHOLD_MB * 1024 * 1024
+
+
 def folder_size_recursive(path: Path) -> int:
     total = 0
     for root, _, files in os.walk(path, onerror=lambda e: None):
@@ -24,11 +28,15 @@ def main():
     local_appdata = Path(os.environ["LOCALAPPDATA"])
 
     results = []
+    large_folders_total = 0
 
     for entry in local_appdata.iterdir():
-        if entry.is_dir():  # ONLY first-level folders
+        if entry.is_dir():
             size = folder_size_recursive(entry)
             results.append((entry.name, size))
+
+            if size >= THRESHOLD_BYTES:
+                large_folders_total += size
 
     results.sort(key=lambda x: x[1], reverse=True)
 
@@ -37,6 +45,11 @@ def main():
 
     for name, size in results:
         print(f"{name:40} {format_size(size):>15}")
+
+    print("\n" + "-" * 58)
+    print(
+        f"Sum of folders >= {THRESHOLD_MB} MB:" f" {format_size(large_folders_total)}"
+    )
 
 
 if __name__ == "__main__":
