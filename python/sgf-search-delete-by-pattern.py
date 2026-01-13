@@ -4,7 +4,7 @@ from fnmatch import fnmatch
 import os
 import shutil
 
-PROJECTS_DIRECTORY = "C:/Users/youmt/Programminng"
+PROJECTS_DIRECTORY = "C:/Users/youmt/youmtinet"
 
 
 def remove_node_modules(directory, dry_run=False):
@@ -142,5 +142,19 @@ def remove_node_modules(directory, dry_run=False):
                     break
 
 
+def count_sizes_of_patterns(directory, patterns):
+    """Count total size of files matching given patterns."""
+    total_size = 0
+    for root, dirs, files in os.walk(directory, topdown=True):
+        for f in files:
+            for pattern in patterns:
+                if fnmatch(f, pattern):
+                    path = os.path.join(root, f)
+                    total_size += os.path.getsize(path)
+                    print(path)
+                    break
+    return total_size
+
 # Call the function to remove node_modules folders
-remove_node_modules(PROJECTS_DIRECTORY)
+# remove_node_modules(PROJECTS_DIRECTORY)
+print(count_sizes_of_patterns(PROJECTS_DIRECTORY, [".git"]))
