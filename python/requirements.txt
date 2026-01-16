@@ -1,0 +1,11 @@
+# Pattern-Based File Cleaner - Requirements
+# 
+# This application uses only Python standard library modules:
+# - os
+# - shutil
+# - threading
+# - tkinter
+# - fnmatch
+#
+# No external dependencies required.
+# Python 3.6+ recommended (for f-string support)
