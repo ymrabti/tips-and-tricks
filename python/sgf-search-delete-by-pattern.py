@@ -73,11 +73,11 @@ def remove_node_modules(directory, dry_run=False):
     file_patterns = [
         "*.aab",
         "*.apk",
-        ".DS_Store",
+        # ".DS_Store",
         "Thumbs.db",
         "desktop.ini",
-        "*.log",
-        "*.log.*",
+        # "*.log",
+        # "*.log.*",
         "npm-debug.log",
         "yarn-error.log",
         "pnpm-debug.log",
@@ -93,7 +93,7 @@ def remove_node_modules(directory, dry_run=False):
         "*.pyo",
         "*.pyd",
         ".python-version",
-        "flutter_export_environment.sh",
+        # "flutter_export_environment.sh",
         "Generated.xcconfig",
         "GeneratedPluginRegistrant.java",
         "GeneratedPluginRegistrant.m",
@@ -106,7 +106,7 @@ def remove_node_modules(directory, dry_run=False):
         "junit.xml",
         "*.swp",
         "*.swo",
-        "*.bak",
+        # "*.bak",
         "*.tmp",
         "*.orig",
         "*.rej",
@@ -156,5 +156,4 @@ def count_sizes_of_patterns(directory, patterns):
     return total_size
 
 # Call the function to remove node_modules folders
-# remove_node_modules(PROJECTS_DIRECTORY)
-print(count_sizes_of_patterns(PROJECTS_DIRECTORY, [".git"]))
+remove_node_modules(PROJECTS_DIRECTORY)

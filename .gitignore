@@ -1,1 +1,4 @@
 clean/CleanupMaintenance.ps1
+venv
+build
+*.exe
