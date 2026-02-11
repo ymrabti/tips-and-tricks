@@ -3,3 +3,4 @@
 
 # Build dependencies (for creating .exe)
 pyinstaller>=6.0.0
+auto-py-to-exe
