@@ -57,12 +57,14 @@ def copy_files_to_everything(
     dest_folder="_everything",
     breadcrumb=False,
     separator="__",
+    dry_run=False,
 ):
     """
     Iterates through the source folder, filters for supported file extensions,
     optionally matches keywords, and copies them into a single destination folder.
     If breadcrumb is True, each copied file name is prefixed with its relative
     folder path (from source_dir), joined by `separator`.
+    If dry_run is True, nothing is created or copied; actions are only printed.
     """
     # Verify the source directory exists
     if not os.path.exists(source_dir):
@@ -73,6 +75,8 @@ def copy_files_to_everything(
         print(f"Error: '{source_dir}' is not a directory.")
         sys.exit(1)
 
+    tag = "[DRY RUN] " if dry_run else ""
+
     # Convert keywords to lowercase for case-insensitive matching
     keyword_set = [kw.lower() for kw in keywords] if keywords else []
 
@@ -82,8 +86,19 @@ def copy_files_to_everything(
 
     # Create the destination folder if it doesn't exist
     if not os.path.exists(dest_folder_safe):
-        os.makedirs(dest_folder_safe)
-        print(f"Created destination folder: {dest_folder}")
+        if dry_run:
+            print(f"{tag}Would create destination folder: {dest_folder}")
+        else:
+            os.makedirs(dest_folder_safe)
+            print(f"Created destination folder: {dest_folder}")
+
+    # Destination paths already used (or planned, in dry-run mode)
+    planned = set()
+    copied_count = 0
+    failed_count = 0
+
+    def is_taken(path):
+        return os.path.exists(path) or os.path.normcase(path) in planned
 
     # Walk through the source directory recursively
     for root, dirs, files in os.walk(source_dir_abs):
@@ -121,21 +136,35 @@ def copy_files_to_everything(
             dest_path = make_long_path_safe(os.path.join(dest_folder_safe, out_name))
 
             # Handle duplicate file names by appending a suffix
-            if os.path.exists(dest_path):
+            if is_taken(dest_path):
                 counter = 1
-                while os.path.exists(dest_path):
+                while is_taken(dest_path):
                     dest_path = make_long_path_safe(
                         os.path.join(dest_folder_safe, f"{out_base}_{counter}{out_ext}")
                     )
                     counter += 1
 
+            planned.add(os.path.normcase(dest_path))
+            shown_dest = os.path.join(dest_folder, os.path.basename(dest_path))
+
+            if dry_run:
+                print(f"{tag}Would copy: {os.path.join(root, file)} -> {shown_dest}")
+                copied_count += 1
+                continue
+
             try:
                 shutil.copy2(source_path, dest_path)
-                print(
-                    f"Copied: {os.path.join(root, file)} -> {os.path.join(dest_folder, os.path.basename(dest_path))}"
-                )
+                print(f"Copied: {os.path.join(root, file)} -> {shown_dest}")
+                copied_count += 1
             except Exception as e:
                 print(f"Failed to copy {file}: {e}")
+                failed_count += 1
+
+    # Summary
+    if dry_run:
+        print(f"\n{tag}{copied_count} file(s) would be copied. Nothing was changed.")
+    else:
+        print(f"\nDone: {copied_count} file(s) copied, {failed_count} failed.")
 
 
 if __name__ == "__main__":
@@ -163,6 +192,11 @@ if __name__ == "__main__":
         default="__",
         help="Separator used between folder names in the breadcrumb prefix (default: '__')",
     )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show what would be copied without creating folders or copying files",
+    )
 
     args = parser.parse_args()
 
@@ -171,4 +205,5 @@ if __name__ == "__main__":
         keywords=args.keywords,
         breadcrumb=args.breadcrumb,
         separator=args.separator,
+        dry_run=args.dry_run,
     )
