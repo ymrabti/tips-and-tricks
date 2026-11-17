@@ -4,3 +4,11 @@
 # Build dependencies (for creating .exe)
 pyinstaller>=6.0.0
 auto-py-to-exe
+
+geopandas
+shapely
+pyproj>=3.6.0
+
+pandas>=2.0.0
+openpyxl>=3.1.0
+xlrd>=2.0.1
