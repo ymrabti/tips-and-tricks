@@ -2,5 +2,6 @@ clean/CleanupMaintenance.ps1
 venv
 build
 *.exe
+.python-version
 
 installed_apps
