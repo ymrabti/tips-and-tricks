@@ -22,8 +22,10 @@ What the UI configures:
   geodatabase folders, GeoPackage, KML/KMZ, GeoJSON/TopoJSON, GML, GPX, CAD, MapInfo, E00,
   FlatGeobuf, OSM, rasters, ESRI/QGIS layers and projects). Rasters are off by default;
   `Extra extensions` accepts a comma-separated list for anything not covered by a chip.
-- **Max shapefile size (MB)** — sums `shp+shx+dbf+prj+cpg+…` of each shapefile dataset and
-  skips the whole dataset when the total exceeds the limit.
+- **File size filter (MIN / MAX, MB)** — applies to every selected format, not just shapefiles:
+  shapefile datasets are sized as `shp+shx+dbf+prj+cpg+…` summed together, every other format uses
+  its own file size. `0` (or an empty field) means no bound, so you can keep a window such as
+  `2 MB … 512 MB`. Skipped datasets are reported in the console with the measured size.
 - **Keywords** — case-insensitive filter on file stems, comma separated.
 - **Preserve folder tree** — copies into mirrored sub-folders; unchecked flattens everything
   into the destination root using the `FLATTEN SEPARATOR` breadcrumb (default `__`) and

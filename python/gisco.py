@@ -231,7 +231,8 @@ class CopyOptions:
     extensions: set[str] = field(default_factory=set)
     include_gdb: bool = True
     keywords: list[str] = field(default_factory=list)
-    max_shapefile_mb: float = 0.0
+    min_size_mb: float = 0.0
+    max_size_mb: float = 0.0
     preserve_tree: bool = True
     separator: str = "__"
     convert_geojson: bool = False
@@ -252,7 +253,7 @@ class Stats:
     def summary(self) -> str:
         return (
             f"{self.files} file(s), {self.gdbs} geodatabase(s) copied, "
-            f"{self.converted} GeoJSON written, {self.skipped_size} oversized skipped, "
+            f"{self.converted} GeoJSON written, {self.skipped_size} skipped by size, "
             f"{self.failed} failed"
         )
 
@@ -289,6 +290,14 @@ def _keyword_ok(stem: str, keywords: Iterable[str]) -> bool:
     return any(keyword in lowered for keyword in keywords)
 
 
+def _representative(members: list[_Member]) -> str:
+    """Pick the file worth naming in a log line (shapefile first)."""
+    for member in members:
+        if member.ext.lower() == ".shp":
+            return member.path
+    return members[0].path
+
+
 def build_plan(
     options: CopyOptions,
     on_log: LogFn | None = None,
@@ -296,7 +305,7 @@ def build_plan(
 ) -> tuple[list[_GdbItem | _GroupItem], int, bool]:
     """Walk the source tree and return what would be copied.
 
-    Returns (items, oversized_shapefiles_skipped, was_stopped).
+    Returns (items, size_filtered_datasets_skipped, was_stopped).
     """
     on_log = on_log or (lambda message, level="info": None)
     should_stop = should_stop or (lambda: False)
@@ -305,7 +314,8 @@ def build_plan(
     dest_abs = os.path.abspath(options.dest)
     allowed = {ext.lower().lstrip(".") for ext in options.extensions}
     keywords = [keyword.lower() for keyword in options.keywords]
-    limit_bytes = int(options.max_shapefile_mb * 1024 * 1024) if options.max_shapefile_mb > 0 else 0
+    min_bytes = int(options.min_size_mb * 1024 * 1024) if options.min_size_mb > 0 else 0
+    max_bytes = int(options.max_size_mb * 1024 * 1024) if options.max_size_mb > 0 else 0
 
     items: list[_GdbItem | _GroupItem] = []
     skipped = 0
@@ -348,20 +358,30 @@ def build_plan(
             )
 
         for members in groups.values():
-            family_bytes = 0
+            # Shapefile datasets are sized with their sidecars; other formats on their own
+            has_shapefile = any(member.ext.lower() == ".shp" for member in members)
+            dataset_bytes = 0
             for member in members:
-                if member.ext.lstrip(".").lower() not in SHAPEFILE_PARTS:
+                if has_shapefile and member.ext.lstrip(".").lower() not in SHAPEFILE_PARTS:
                     continue
                 try:
-                    family_bytes += os.path.getsize(member.path)
+                    dataset_bytes += os.path.getsize(member.path)
                 except OSError:
                     continue
-            has_shapefile = any(member.ext.lower() == ".shp" for member in members)
-            if limit_bytes and has_shapefile and family_bytes > limit_bytes:
+
+            if min_bytes and dataset_bytes < min_bytes:
                 skipped += 1
                 on_log(
-                    f"Skipped oversized shapefile: {members[0].path} "
-                    f"({format_size(family_bytes)} > {format_size(limit_bytes)})",
+                    f"Skipped small dataset: {_representative(members)} "
+                    f"({format_size(dataset_bytes)} < {format_size(min_bytes)})",
+                    "warning",
+                )
+                continue
+            if max_bytes and dataset_bytes > max_bytes:
+                skipped += 1
+                on_log(
+                    f"Skipped oversized dataset: {_representative(members)} "
+                    f"({format_size(dataset_bytes)} > {format_size(max_bytes)})",
                     "warning",
                 )
                 continue
@@ -529,7 +549,7 @@ def run_job(
         return stats
 
     on_log(
-        f"Plan: {len(items)} dataset(s), {skipped} oversized shapefile(s) skipped "
+        f"Plan: {len(items)} dataset(s), {skipped} skipped by size "
         f"({'tree preserved' if options.preserve_tree else 'flat output'})",
         "info",
     )
@@ -1113,8 +1133,9 @@ class GiscoApp:
         self.source_var = tk.StringVar()
         self.dest_var = tk.StringVar(value="_gis_everything")
         self.keywords_var = tk.StringVar()
-        self.max_enabled = tk.BooleanVar(value=False)
-        self.max_value = tk.StringVar(value="250")
+        self.size_filter_enabled = tk.BooleanVar(value=False)
+        self.min_size_value = tk.StringVar(value="0")
+        self.max_size_value = tk.StringVar(value="250")
         self.separator_var = tk.StringVar(value="__")
         self.preserve_tree = tk.BooleanVar(value=True)
         self.convert_geojson = tk.BooleanVar(value=False)
@@ -1126,6 +1147,7 @@ class GiscoApp:
         self.chips: list[Chip] = []
         self.keep_copies_check: NeonCheck | None = None
         self.separator_entry: tk.Entry | None = None
+        self.min_entry: tk.Entry | None = None
         self.max_entry: tk.Entry | None = None
         self.counters: dict[str, tk.Label] = {}
 
@@ -1381,18 +1403,45 @@ class GiscoApp:
         reflow()
 
     def _build_filters(self, parent) -> None:
-        max_row = tk.Frame(parent, bg=Palette.PANEL)
-        max_row.pack(fill=tk.X, pady=(2, 6))
+        size_row = tk.Frame(parent, bg=Palette.PANEL)
+        size_row.pack(fill=tk.X, pady=(2, 2))
         NeonCheck(
-            max_row,
-            "Max shapefile size (shp+shx+dbf+prj+... summed)",
-            self.max_enabled,
+            size_row,
+            "File size filter — every GIS format",
+            self.size_filter_enabled,
             accent=Palette.AMBER,
             command=self._sync_dependent_state,
         ).pack(side=tk.LEFT, fill=tk.X, expand=True)
-        self.max_entry = styled_entry(max_row, self.max_value, width=7)
-        self.max_entry.pack(side=tk.LEFT, ipady=3, padx=(8, 5))
-        tk.Label(max_row, text="MB", bg=Palette.PANEL, fg=Palette.AMBER, font=mono_font(8, "bold")).pack(side=tk.LEFT)
+
+        bounds = tk.Frame(parent, bg=Palette.PANEL)
+        bounds.pack(fill=tk.X, pady=(0, 4), padx=(24, 0))
+        tk.Label(
+            bounds, text="MIN", bg=Palette.PANEL, fg=Palette.AMBER, font=mono_font(8, "bold"), width=4, anchor="w"
+        ).pack(side=tk.LEFT)
+        self.min_entry = styled_entry(bounds, self.min_size_value, width=8)
+        self.min_entry.pack(side=tk.LEFT, ipady=3)
+        tk.Label(bounds, text="MB", bg=Palette.PANEL, fg=Palette.AMBER, font=mono_font(8, "bold")).pack(
+            side=tk.LEFT, padx=(5, 14)
+        )
+        tk.Label(
+            bounds, text="MAX", bg=Palette.PANEL, fg=Palette.AMBER, font=mono_font(8, "bold"), width=4, anchor="w"
+        ).pack(side=tk.LEFT)
+        self.max_entry = styled_entry(bounds, self.max_size_value, width=8)
+        self.max_entry.pack(side=tk.LEFT, ipady=3)
+        tk.Label(bounds, text="MB", bg=Palette.PANEL, fg=Palette.AMBER, font=mono_font(8, "bold")).pack(
+            side=tk.LEFT, padx=(5, 10)
+        )
+        tk.Label(
+            bounds, text="0 = no limit", bg=Palette.PANEL, fg=mix(Palette.MUTED, Palette.BG, 0.2), font=ui_font(8)
+        ).pack(side=tk.LEFT)
+
+        tk.Label(
+            parent,
+            text="shapefile datasets are sized shp+shx+dbf+prj+…, other formats use their own size",
+            bg=Palette.PANEL,
+            fg=mix(Palette.MUTED, Palette.BG, 0.25),
+            font=ui_font(8),
+        ).pack(anchor="w", padx=(24, 0), pady=(0, 6))
 
         kw_row = tk.Frame(parent, bg=Palette.PANEL)
         kw_row.pack(fill=tk.X, pady=(4, 6))
@@ -1549,6 +1598,19 @@ class GiscoApp:
         if folder:
             self.dest_var.set(folder)
 
+    @staticmethod
+    def _parse_megabytes(raw: str, label: str) -> float:
+        text = raw.strip().replace(",", ".")
+        if not text:
+            return 0.0
+        try:
+            value = float(text)
+        except ValueError as exc:
+            raise GiscoError(f"{label} size must be a number in MB (0 = no limit).") from exc
+        if value < 0:
+            raise GiscoError(f"{label} size cannot be negative.")
+        return value
+
     def _sync_dependent_state(self) -> None:
         transform = self.convert_geojson.get() and self.geojson_ready
         if self.keep_copies_check is not None:
@@ -1556,8 +1618,10 @@ class GiscoApp:
         if self.separator_entry is not None:
             state = tk.DISABLED if self.preserve_tree.get() else tk.NORMAL
             self.separator_entry.configure(state=state)
-        if self.max_entry is not None:
-            self.max_entry.configure(state=tk.NORMAL if self.max_enabled.get() else tk.DISABLED)
+        size_state = tk.NORMAL if self.size_filter_enabled.get() else tk.DISABLED
+        for entry in (self.min_entry, self.max_entry):
+            if entry is not None:
+                entry.configure(state=size_state)
 
     def _collect_options(self) -> CopyOptions:
         extensions = {
@@ -1576,15 +1640,13 @@ class GiscoApp:
 
         keywords = [token.strip() for token in self.keywords_var.get().split(",") if token.strip()]
 
+        min_mb = 0.0
         max_mb = 0.0
-        if self.max_enabled.get():
-            raw = self.max_value.get().strip().replace(",", ".")
-            try:
-                max_mb = float(raw)
-            except ValueError as exc:
-                raise GiscoError("Max shapefile size must be a number (MB).") from exc
-            if max_mb <= 0:
-                raise GiscoError("Max shapefile size must be greater than 0 MB.")
+        if self.size_filter_enabled.get():
+            min_mb = self._parse_megabytes(self.min_size_value.get(), "Min")
+            max_mb = self._parse_megabytes(self.max_size_value.get(), "Max")
+            if min_mb and max_mb and min_mb > max_mb:
+                raise GiscoError("Min size must be lower than max size.")
 
         include_gdb = bool(self.chip_vars["gdb"].get()) if "gdb" in self.chip_vars else False
         if not extensions and not include_gdb:
@@ -1602,7 +1664,8 @@ class GiscoApp:
             extensions=extensions,
             include_gdb=include_gdb,
             keywords=keywords,
-            max_shapefile_mb=max_mb,
+            min_size_mb=min_mb,
+            max_size_mb=max_mb,
             preserve_tree=self.preserve_tree.get(),
             separator=self.separator_var.get() or "__",
             convert_geojson=transform,
