@@ -7,7 +7,16 @@ authors = [
     { name = "Younes M'RABTI", email = "younesmrabti50@gmail.com" }
 ]
 requires-python = ">=3.14"
-dependencies = []
+dependencies = [
+    "auto-py-to-exe>=2.50.1",
+    "geopandas>=1.2.0",
+    "openpyxl>=3.1.0",
+    "pandas>=2.0.0",
+    "pyinstaller>=6.0.0",
+    "pyproj>=3.6.0",
+    "shapely>=2.2.0",
+    "xlrd>=2.0.1",
+]
 
 [project.scripts]
 tipstricks = "tipstricks:main"
