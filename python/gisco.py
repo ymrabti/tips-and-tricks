@@ -247,13 +247,13 @@ class Stats:
     files: int = 0
     gdbs: int = 0
     converted: int = 0
-    skipped_size: int = 0
+    skipped: int = 0
     failed: int = 0
 
     def summary(self) -> str:
         return (
             f"{self.files} file(s), {self.gdbs} geodatabase(s) copied, "
-            f"{self.converted} GeoJSON written, {self.skipped_size} skipped by size, "
+            f"{self.converted} GeoJSON written, {self.skipped} skipped, "
             f"{self.failed} failed"
         )
 
@@ -327,65 +327,71 @@ def build_plan(
         # Never walk into the destination folder (even if nested in the source)
         dirs[:] = [d for d in dirs if os.path.abspath(os.path.join(root, d)) != dest_abs]
         dirs.sort()
-        rel_dir = os.path.relpath(root, source_abs)
-        rel_dir = "" if rel_dir == "." else rel_dir
 
-        for directory in list(dirs):
-            if not directory.lower().endswith(".gdb"):
-                continue
-            dirs.remove(directory)  # don't descend into internal .gdbtable etc.
-            if not options.include_gdb:
-                continue
-            if not _keyword_ok(directory[:-4], keywords):
-                continue
-            items.append(
-                _GdbItem(
-                    src=os.path.join(root, directory),
-                    rel_dir=rel_dir,
-                    name=directory,
-                )
-            )
+        # An unreadable or malformed folder must not abort the scan
+        try:
+            rel_dir = os.path.relpath(root, source_abs)
+            rel_dir = "" if rel_dir == "." else rel_dir
 
-        groups: dict[str, list[_Member]] = {}
-        for filename in sorted(files):
-            stem, ext = split_name(filename)
-            if ext.lstrip(".").lower() not in allowed:
-                continue
-            if not _keyword_ok(stem, keywords):
-                continue
-            groups.setdefault(stem.lower(), []).append(
-                _Member(path=os.path.join(root, filename), stem=stem, ext=ext)
-            )
-
-        for members in groups.values():
-            # Shapefile datasets are sized with their sidecars; other formats on their own
-            has_shapefile = any(member.ext.lower() == ".shp" for member in members)
-            dataset_bytes = 0
-            for member in members:
-                if has_shapefile and member.ext.lstrip(".").lower() not in SHAPEFILE_PARTS:
+            for directory in list(dirs):
+                if not directory.lower().endswith(".gdb"):
                     continue
-                try:
-                    dataset_bytes += os.path.getsize(member.path)
-                except OSError:
+                dirs.remove(directory)  # don't descend into internal .gdbtable etc.
+                if not options.include_gdb:
                     continue
+                if not _keyword_ok(directory[:-4], keywords):
+                    continue
+                items.append(
+                    _GdbItem(
+                        src=os.path.join(root, directory),
+                        rel_dir=rel_dir,
+                        name=directory,
+                    )
+                )
 
-            if min_bytes and dataset_bytes < min_bytes:
-                skipped += 1
-                on_log(
-                    f"Skipped small dataset: {_representative(members)} "
-                    f"({format_size(dataset_bytes)} < {format_size(min_bytes)})",
-                    "warning",
+            groups: dict[str, list[_Member]] = {}
+            for filename in sorted(files):
+                stem, ext = split_name(filename)
+                if ext.lstrip(".").lower() not in allowed:
+                    continue
+                if not _keyword_ok(stem, keywords):
+                    continue
+                groups.setdefault(stem.lower(), []).append(
+                    _Member(path=os.path.join(root, filename), stem=stem, ext=ext)
                 )
-                continue
-            if max_bytes and dataset_bytes > max_bytes:
-                skipped += 1
-                on_log(
-                    f"Skipped oversized dataset: {_representative(members)} "
-                    f"({format_size(dataset_bytes)} > {format_size(max_bytes)})",
-                    "warning",
-                )
-                continue
-            items.append(_GroupItem(rel_dir=rel_dir, members=members))
+
+            for members in groups.values():
+                # Shapefile datasets are sized with their sidecars; other formats on their own
+                has_shapefile = any(member.ext.lower() == ".shp" for member in members)
+                dataset_bytes = 0
+                for member in members:
+                    if has_shapefile and member.ext.lstrip(".").lower() not in SHAPEFILE_PARTS:
+                        continue
+                    try:
+                        dataset_bytes += os.path.getsize(member.path)
+                    except OSError:
+                        continue
+
+                if min_bytes and dataset_bytes < min_bytes:
+                    skipped += 1
+                    on_log(
+                        f"Skipped small dataset: {_representative(members)} "
+                        f"({format_size(dataset_bytes)} < {format_size(min_bytes)})",
+                        "warning",
+                    )
+                    continue
+                if max_bytes and dataset_bytes > max_bytes:
+                    skipped += 1
+                    on_log(
+                        f"Skipped oversized dataset: {_representative(members)} "
+                        f"({format_size(dataset_bytes)} > {format_size(max_bytes)})",
+                        "warning",
+                    )
+                    continue
+                items.append(_GroupItem(rel_dir=rel_dir, members=members))
+        except Exception as exc:
+            on_log(f"Skipped unreadable folder {root}: {exc}", "warning")
+            continue
 
     return items, skipped, False
 
@@ -449,6 +455,7 @@ def _convert_member(
     on_log: LogFn,
     should_stop: Callable[[], bool],
 ) -> None:
+    """Convert every layer of one dataset; a failing layer never stops the run."""
     try:
         from pyogrio import list_layers
     except Exception as exc:  # pragma: no cover - depends on the environment
@@ -458,58 +465,103 @@ def _convert_member(
 
     try:
         layers = [row[0] for row in list_layers(member.path)]
-    except Exception:
+    except Exception as exc:
+        on_log(f"GeoJSON layer listing failed: {member.path}: {exc}", "warning")
         layers = []
 
     multi_layer = len(layers) > 1
     for layer in layers or [None]:
         if should_stop():
             return
-        base = f"{prefix}{member.stem}{suffix}"
-        if multi_layer and layer:
-            base = f"{base}_{_slug(layer)}"
-        out_path = _unique_path(target_dir, base, ".geojson", planned)
-        planned.add(os.path.normcase(out_path))
-
-        if options.dry_run:
-            on_log(f"[DRY RUN] Would write GeoJSON: {member.path} -> {out_path}", "path")
-            stats.converted += 1
-            continue
-
         try:
-            frame = _read_layer(member.path, layer)
-        except Exception as exc:
-            stats.failed += 1
-            on_log(f"GeoJSON read failed: {member.path}: {exc}", "error")
-            continue
-
-        if frame.empty:
-            on_log(f"GeoJSON skipped (no features): {member.path}", "warning")
-            continue
-
-        if frame.crs is None:
-            on_log(
-                f"No CRS in {os.path.basename(member.path)} - GeoJSON written as-is",
-                "warning",
+            _convert_layer(
+                member, layer, multi_layer, target_dir, prefix, suffix, options, stats, planned, on_log
             )
-        elif frame.crs.to_epsg() != 4326:
-            try:
-                frame = frame.to_crs(4326)
-            except Exception as exc:
-                stats.failed += 1
-                on_log(f"Reprojection to EPSG:4326 failed: {member.path}: {exc}", "error")
-                continue
-
-        try:
-            os.makedirs(make_long_path_safe(target_dir), exist_ok=True)
-            _write_geojson(frame, out_path)
         except Exception as exc:
             stats.failed += 1
-            on_log(f"GeoJSON write failed: {out_path}: {exc}", "error")
-            continue
+            on_log(f"GeoJSON conversion failed: {_where(member, layer if multi_layer else None)}: {exc}", "error")
 
+
+def _where(member: _Member, layer: str | None) -> str:
+    return f"{member.path} [layer {layer}]" if layer else member.path
+
+
+def _convert_layer(
+    member: _Member,
+    layer: str | None,
+    multi_layer: bool,
+    target_dir: str,
+    prefix: str,
+    suffix: str,
+    options: CopyOptions,
+    stats: Stats,
+    planned: set[str],
+    on_log: LogFn,
+) -> None:
+    base = f"{prefix}{member.stem}{suffix}"
+    if multi_layer and layer:
+        base = f"{base}_{_slug(layer)}"
+    out_path = _unique_path(target_dir, base, ".geojson", planned)
+    planned.add(os.path.normcase(out_path))
+
+    if options.dry_run:
+        on_log(f"[DRY RUN] Would write GeoJSON: {member.path} -> {out_path}", "path")
         stats.converted += 1
-        on_log(f"GeoJSON: {member.path} -> {out_path}", "success")
+        return
+
+    try:
+        frame = _read_layer(member.path, layer)
+    except Exception as exc:
+        stats.failed += 1
+        on_log(f"GeoJSON read failed: {_where(member, layer if multi_layer else None)}: {exc}", "error")
+        return
+
+    if getattr(frame, "empty", True):
+        stats.skipped += 1
+        on_log(f"GeoJSON skipped (no features): {_where(member, layer if multi_layer else None)}", "warning")
+        return
+    if not hasattr(frame, "geometry"):
+        stats.skipped += 1
+        on_log(f"GeoJSON skipped (not a vector layer): {_where(member, layer if multi_layer else None)}", "warning")
+        return
+
+    crs = getattr(frame, "crs", None)
+    epsg = None
+    can_reproject = crs is not None and hasattr(crs, "to_epsg")
+    if can_reproject:
+        try:
+            epsg = crs.to_epsg()
+        except Exception:
+            can_reproject, epsg = False, None
+
+    if crs is None:
+        on_log(
+            f"No CRS in {os.path.basename(member.path)} - GeoJSON written as-is",
+            "warning",
+        )
+    elif not can_reproject:
+        on_log(
+            f"Unusable CRS metadata in {os.path.basename(member.path)} - GeoJSON written as-is",
+            "warning",
+        )
+    elif epsg != 4326:
+        try:
+            frame = frame.to_crs(4326)
+        except Exception as exc:
+            stats.failed += 1
+            on_log(f"Reprojection to EPSG:4326 failed: {member.path}: {exc}", "error")
+            return
+
+    try:
+        os.makedirs(make_long_path_safe(target_dir), exist_ok=True)
+        _write_geojson(frame, out_path)
+    except Exception as exc:
+        stats.failed += 1
+        on_log(f"GeoJSON write failed: {out_path}: {exc}", "error")
+        return
+
+    stats.converted += 1
+    on_log(f"GeoJSON: {member.path} -> {out_path}", "success")
 
 
 def run_job(
@@ -540,7 +592,7 @@ def run_job(
     on_log(f"Scanning {source_abs}", "header")
 
     items, skipped, stopped = build_plan(options, on_log, should_stop)
-    stats.skipped_size = skipped
+    stats.skipped = skipped
     if stopped:
         on_log("Stopped while scanning.", "warning")
         return stats
@@ -574,12 +626,7 @@ def run_job(
             return ""
         return options.separator.join(rel_dir.split(os.sep)) + options.separator
 
-    stopped = False
-    for index, item in enumerate(items, start=1):
-        if should_stop():
-            stopped = True
-            break
-
+    def process_item(item: _GdbItem | _GroupItem) -> None:
         target_dir = target_dir_for(item.rel_dir)
         prefix = prefix_for(item.rel_dir)
 
@@ -594,20 +641,19 @@ def run_job(
             if options.dry_run:
                 on_log(f"{tag}Would copy GDB: {item.src} -> {shown}", "path")
                 stats.gdbs += 1
-            else:
-                try:
-                    os.makedirs(make_long_path_safe(target_dir), exist_ok=True)
-                    shutil.copytree(
-                        make_long_path_safe(item.src),
-                        make_long_path_safe(os.path.join(target_dir, out_name)),
-                    )
-                    stats.gdbs += 1
-                    on_log(f"Copied GDB: {item.src} -> {shown}", "success")
-                except Exception as exc:
-                    stats.failed += 1
-                    on_log(f"Failed to copy GDB {item.name}: {exc}", "error")
-            on_progress(index, total)
-            continue
+                return
+            try:
+                os.makedirs(make_long_path_safe(target_dir), exist_ok=True)
+                shutil.copytree(
+                    make_long_path_safe(item.src),
+                    make_long_path_safe(os.path.join(target_dir, out_name)),
+                )
+                stats.gdbs += 1
+                on_log(f"Copied GDB: {item.src} -> {shown}", "success")
+            except Exception as exc:
+                stats.failed += 1
+                on_log(f"Failed to copy GDB {item.name}: {exc}", "error")
+            return
 
         # A shapefile converted on its own loses its sidecars, so the whole family goes
         shapefile_convert_only = (
@@ -644,15 +690,15 @@ def run_job(
                 if options.dry_run:
                     on_log(f"{tag}Would copy: {member.path} -> {shown}", "path")
                     stats.files += 1
-                else:
-                    try:
-                        os.makedirs(make_long_path_safe(target_dir), exist_ok=True)
-                        shutil.copy2(make_long_path_safe(member.path), make_long_path_safe(dest_path))
-                        stats.files += 1
-                        on_log(f"Copied: {member.path} -> {shown}", "info")
-                    except Exception as exc:
-                        stats.failed += 1
-                        on_log(f"Failed to copy {member.ext or member.stem}: {member.path}: {exc}", "error")
+                    continue
+                try:
+                    os.makedirs(make_long_path_safe(target_dir), exist_ok=True)
+                    shutil.copy2(make_long_path_safe(member.path), make_long_path_safe(dest_path))
+                    stats.files += 1
+                    on_log(f"Copied: {member.path} -> {shown}", "info")
+                except Exception as exc:
+                    stats.failed += 1
+                    on_log(f"Failed to copy {member.ext or member.stem}: {member.path}: {exc}", "error")
                 continue
 
             try:
@@ -662,6 +708,20 @@ def run_job(
             except GiscoError as exc:
                 on_log(str(exc), "error")
                 stats.failed += 1
+
+    stopped = False
+    for index, item in enumerate(items, start=1):
+        if should_stop():
+            stopped = True
+            break
+
+        # One broken dataset must never abort the batch: log it and carry on
+        try:
+            process_item(item)
+        except Exception as exc:
+            stats.failed += 1
+            label = item.name if isinstance(item, _GdbItem) else item.members[0].path
+            on_log(f"Skipped after unexpected error: {label}: {exc}", "error")
 
         on_progress(index, total)
 
@@ -1744,33 +1804,44 @@ class GiscoApp:
         try:
             while True:
                 kind, payload, extra = self.messages.get_nowait()
-                if kind == "log":
-                    self._append_log(payload, extra)
-                elif kind == "progress":
-                    done, total = payload, extra
-                    self.progress.set(done / total if total else 0)
-                    self.state_var.set(f"RUNNING {done}/{total}")
-                elif kind == "done":
-                    stats: Stats = payload
-                    stopped = self.stop_event.is_set()
-                    self.counters["copied"].configure(text=str(stats.files + stats.gdbs))
-                    self.counters["converted"].configure(text=str(stats.converted))
-                    self.counters["skipped"].configure(text=str(stats.skipped_size))
-                    self.counters["failed"].configure(text=str(stats.failed))
-                    if not stopped:
-                        self.progress.set(1)
-                    self._set_running(False)
-                    if stopped:
-                        self.state_var.set("STOPPED")
-                    else:
-                        self.state_var.set("DONE" if stats.failed == 0 else "DONE WITH ERRORS")
-                    self._append_log("─" * 58, "header")
-                elif kind == "error":
-                    self._append_log(payload, "error")
-                    self._set_running(False)
-                    self.state_var.set("ERROR")
+                # A UI hiccup must never kill the poller and leave the buttons locked
+                try:
+                    if kind == "log":
+                        self._append_log(payload, extra)
+                    elif kind == "progress":
+                        done, total = payload, extra
+                        self.progress.set(done / total if total else 0)
+                        self.state_var.set(f"RUNNING {done}/{total}")
+                    elif kind == "done":
+                        stats: Stats = payload
+                        stopped = self.stop_event.is_set()
+                        self.counters["copied"].configure(text=str(stats.files + stats.gdbs))
+                        self.counters["converted"].configure(text=str(stats.converted))
+                        self.counters["skipped"].configure(text=str(stats.skipped))
+                        self.counters["failed"].configure(text=str(stats.failed))
+                        if not stopped:
+                            self.progress.set(1)
+                        self._set_running(False)
+                        if stopped:
+                            self.state_var.set("STOPPED")
+                        else:
+                            self.state_var.set("DONE" if stats.failed == 0 else "DONE WITH ERRORS")
+                        self._append_log("─" * 58, "header")
+                    elif kind == "error":
+                        self._append_log(payload, "error")
+                        self._set_running(False)
+                        self.state_var.set("ERROR")
+                except tk.TclError:
+                    raise
+                except Exception as exc:
+                    try:
+                        self._append_log(f"UI warning while handling '{kind}': {exc}", "error")
+                    except tk.TclError:
+                        raise
         except queue.Empty:
             pass
+        except tk.TclError:
+            return
         try:
             self.root.after(60, self._pump_messages)
         except tk.TclError:

@@ -38,3 +38,11 @@ What the UI configures:
 
 GeoJSON conversion needs `geopandas` and `pyogrio` (already in `pyproject.toml`); the
 checkbox is disabled automatically when they cannot be imported.
+
+### Error handling
+
+Every dataset is processed inside its own guard: a corrupt file, an unreadable layer, a
+missing CRS or a failed reprojection is logged in the console, increments **FAILED** (or
+**SKIPPED** for empty/unusable layers) and the batch keeps going. Only configuration
+problems (bad source/destination, nothing selected, unusable size range) stop a run, and the
+stop button still aborts cleanly.
